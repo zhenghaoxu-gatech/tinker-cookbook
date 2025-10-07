@@ -197,6 +197,9 @@ class WandbLogger(Logger):
             dir=str(log_dir) if log_dir else None,
             name=wandb_name,
         )
+        if self.run and wandb is not None:
+            wandb.define_metric("eval_step")
+            wandb.define_metric("test/*", step_metric="eval_step")
 
     def log_hparams(self, config: Any) -> None:
         """Log hyperparameters to wandb."""
@@ -206,7 +209,7 @@ class WandbLogger(Logger):
     def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
         """Log metrics to wandb."""
         if self.run and wandb is not None:
-            wandb.log(metrics, step=step)
+            wandb.log(metrics, step=step, commit=True)
 
     def close(self) -> None:
         """Close wandb run."""

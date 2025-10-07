@@ -190,6 +190,7 @@ class Config:
     dataset_builder: RLDatasetBuilder  # also determines batch size
     model_name: str
     max_tokens: int
+    max_tokens_eval: int | None = None
     compute_post_kl: bool = False
     evaluator_builders: list[SamplingClientEvaluatorBuilder] = chz.field(default_factory=list)
     lora_rank: int = 32
@@ -249,11 +250,15 @@ async def do_sync_training_with_stream_minibatch(
         t_start = time.time()
 
         # Run evaluations
+        ran_eval = False
         if (cfg.eval_every > 0 and i_batch % cfg.eval_every == 0) or i_batch == end_batch - 1:
             with timed("run_evals", metrics):
                 for evaluator in evaluators:
                     eval_metrics = await evaluator(sampling_client)
                     metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+            ran_eval = True
+        if ran_eval:
+            metrics["eval_step"] = i_batch
 
         # Samplers will produce trajectory groups asynchronously,
         # and the trainer will consume them as soon as they are ready
@@ -520,8 +525,9 @@ async def do_async_training(
                     for evaluator in evaluators:
                         eval_metrics = await evaluator(sampling_client_eval)
                         metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+                metrics["eval_step"] = sampling_client_eval_step
                 metrics["time/evaluation_loop/total"] = time.time() - t_start
-                ml_logger.log_metrics(metrics, step=sampling_client_eval_step)
+                ml_logger.log_metrics(metrics, step=None)
 
     await asyncio.gather(
         dataloader_loop(),
@@ -806,11 +812,15 @@ async def do_sync_training(
         t_start = time.time()
 
         # Run evaluations
+        ran_eval = False
         if cfg.eval_every > 0 and i_batch % cfg.eval_every == 0:
             with timed("run_evals", metrics):
                 for evaluator in evaluators:
                     eval_metrics = await evaluator(sampling_client)
                     metrics.update({f"test/{k}": v for k, v in eval_metrics.items()})
+            ran_eval = True
+        if ran_eval:
+            metrics["eval_step"] = i_batch
 
         # Get batch and sample trajectories
         env_group_builders_P = dataset.get_batch(i_batch)
@@ -883,7 +893,8 @@ async def main(
     dataset, maybe_test_dataset = await cfg.dataset_builder()
     evaluators = [evaluator() for evaluator in cfg.evaluator_builders]
     if maybe_test_dataset is not None:
-        evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=cfg.max_tokens))
+        eval_max_tokens = cfg.max_tokens_eval if cfg.max_tokens_eval is not None else cfg.max_tokens
+        evaluators.append(RLTestSetEvaluator(maybe_test_dataset, max_tokens=eval_max_tokens))
 
     num_batches = len(dataset)
     logger.info(f"Will train on {num_batches} batches")
