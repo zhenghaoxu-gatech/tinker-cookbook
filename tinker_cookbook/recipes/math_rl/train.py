@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from datetime import datetime
+from typing import Literal
 
 import chz
 from tinker_cookbook import cli_utils, model_info
@@ -26,12 +27,16 @@ class CLIConfig:
 
     # Environment configuration
     env: str = "arithmetic"  # Options: arithmetic, math, polaris, deepmath, gsm8k
+    grader: Literal["sympy", "math_verify"] | None = None
+    difficulty_min: float | None = None
+    difficulty_max: float | None = None
 
     # Training hyperparameters
     group_size: int = 4
     groups_per_batch: int = 100
     learning_rate: float = 1e-5
     max_tokens: int = 5
+    max_tokens_eval: int | None = None
     kl_penalty_coef: float = 0.0
 
     # Number of optimizer steps per training iteration.
@@ -64,6 +69,9 @@ def get_dataset_builder(
     model_name: str,
     renderer_name: str,
     group_size: int,
+    grader: Literal["sympy", "math_verify"] | None,
+    difficulty_min: float | None,
+    difficulty_max: float | None,
 ) -> RLDatasetBuilder:
     if env == "arithmetic":
         return arithmetic_env.ArithmeticDatasetBuilder(
@@ -81,6 +89,9 @@ def get_dataset_builder(
             model_name_for_tokenizer=model_name,
             renderer_name=renderer_name,
             group_size=group_size,
+            grader=grader,
+            difficulty_min=difficulty_min,
+            difficulty_max=difficulty_max,
         )
     else:
         raise ValueError(f"Unknown environment: {env}")
@@ -114,10 +125,14 @@ async def cli_main(cli_config: CLIConfig):
             model_name=cli_config.model_name,
             renderer_name=renderer_name,
             group_size=cli_config.group_size,
+            grader=cli_config.grader,
+            difficulty_min=cli_config.difficulty_min,
+            difficulty_max=cli_config.difficulty_max,
         ),
         model_name=cli_config.model_name,
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
+        max_tokens_eval=cli_config.max_tokens_eval,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         log_path=log_path,

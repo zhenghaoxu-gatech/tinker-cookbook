@@ -24,7 +24,7 @@ class MathEnv(ProblemEnv):
         answer: str,
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
-        grader: Literal["sympy", "math_verify"] = "sympy",
+        grader: Literal["sympy", "math_verify"] = "math_verify",
         timeout: float = 1.0,
     ):
         super().__init__(renderer, convo_prefix)
@@ -143,6 +143,7 @@ class MathDataset(RLDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
+        grader: Literal["sympy", "math_verify"] = "math_verify",
     ):
         if split == "train":
             self.ds = _get_hendrycks_math_train().shuffle(seed=0)
@@ -152,6 +153,7 @@ class MathDataset(RLDataset):
         self.group_size = group_size if split == "train" else 1
         self.renderer = renderer
         self.convo_prefix = convo_prefix
+        self.grader = grader
 
     def get_batch(self, index: int) -> list[EnvGroupBuilder]:
         batch_start = index * self.batch_size
@@ -176,7 +178,12 @@ class MathDataset(RLDataset):
             return None
         return ProblemGroupBuilder(
             env_thunk=partial(
-                MathEnv, x["problem"], answer, self.renderer, convo_prefix=self.convo_prefix
+                MathEnv,
+                x["problem"],
+                answer,
+                self.renderer,
+                convo_prefix=self.convo_prefix,
+                grader=self.grader,
             ),
             num_envs=group_size,
         )
@@ -189,6 +196,7 @@ class MathDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
     convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
+    grader: Literal["sympy", "math_verify"] = "math_verify"
 
     async def __call__(self) -> tuple[MathDataset, MathDataset]:
         if self.convo_prefix == "standard":
@@ -204,6 +212,7 @@ class MathDatasetBuilder(RLDatasetBuilder):
                 renderer=renderer,
                 convo_prefix=convo_prefix,
                 split=split,
+                grader=self.grader,
             )
             for split in ("train", "test")
         ]
@@ -217,6 +226,7 @@ class PolarisDataset(MathDataset):
         group_size: int,
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
+        grader: Literal["sympy", "math_verify"] = "math_verify",
     ):
         # Don't call super().__init__ since we're overriding the dataset loading
         self.ds = load_dataset("POLARIS-Project/Polaris-Dataset-53K", split="train").shuffle(seed=0)
@@ -224,6 +234,7 @@ class PolarisDataset(MathDataset):
         self.group_size = group_size
         self.renderer = renderer
         self.convo_prefix = convo_prefix
+        self.grader = grader
 
     def _make_env_group_builder(
         self, x: dict[str, str], group_size: int
@@ -235,7 +246,12 @@ class PolarisDataset(MathDataset):
             return None
         return ProblemGroupBuilder(
             env_thunk=partial(
-                MathEnv, problem, answer, self.renderer, convo_prefix=self.convo_prefix
+                MathEnv,
+                problem,
+                answer,
+                self.renderer,
+                convo_prefix=self.convo_prefix,
+                grader=self.grader,
             ),
             num_envs=group_size,
             dataset_name="polaris",
@@ -248,6 +264,7 @@ class PolarisDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int
+    grader: Literal["sympy", "math_verify"] = "math_verify"
 
     async def __call__(self) -> tuple[PolarisDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
@@ -255,6 +272,7 @@ class PolarisDatasetBuilder(RLDatasetBuilder):
             batch_size=self.batch_size,
             group_size=self.group_size,
             renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
+            grader=self.grader,
         ), None
 
 
@@ -265,13 +283,34 @@ class DeepMathDataset(MathDataset):
         group_size: int,
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
+        grader: Literal["sympy", "math_verify"] = "math_verify",
+        difficulty_min: float | None = None,
+        difficulty_max: float | None = None,
     ):
         # Don't call super().__init__ since we're overriding the dataset loading
-        self.ds = load_dataset("zwhe99/DeepMath-103K", split="train").shuffle(seed=0)
+        dataset = load_dataset("zwhe99/DeepMath-103K", split="train")
+        if difficulty_min is not None or difficulty_max is not None:
+            def in_range(example: dict[str, object]) -> bool:
+                difficulty_value = example.get("difficulty")
+                if difficulty_value is None:
+                    return False
+                try:
+                    difficulty = float(difficulty_value)
+                except (TypeError, ValueError):
+                    return False
+                if difficulty_min is not None and difficulty < difficulty_min:
+                    return False
+                if difficulty_max is not None and difficulty > difficulty_max:
+                    return False
+                return True
+
+            dataset = dataset.filter(in_range)
+        self.ds = dataset.shuffle(seed=0)
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer = renderer
         self.convo_prefix = convo_prefix
+        self.grader = grader
 
     def _make_env_group_builder(
         self, x: dict[str, str], group_size: int
@@ -283,7 +322,12 @@ class DeepMathDataset(MathDataset):
             return None
         return ProblemGroupBuilder(
             env_thunk=partial(
-                MathEnv, problem, answer, self.renderer, convo_prefix=self.convo_prefix
+                MathEnv,
+                problem,
+                answer,
+                self.renderer,
+                convo_prefix=self.convo_prefix,
+                grader=self.grader,
             ),
             num_envs=group_size,
             dataset_name="deepmath",
@@ -320,10 +364,12 @@ class MathArenaEvalDataset(RLDataset):
         dataset_specs: Sequence[tuple[str, str]] = MATH_ARENA_VALIDATION_SPECS,
         batch_size: int = 1,
         eval_group_size: int = 1,
+        grader: Literal["sympy", "math_verify"] = "math_verify",
     ):
         self.renderer = renderer
         self.convo_prefix = convo_prefix
         self.batch_size = batch_size
+        self.grader = grader
         if eval_group_size < 1:
             raise ValueError("eval_group_size must be >= 1")
         self.group_size = eval_group_size
@@ -342,7 +388,12 @@ class MathArenaEvalDataset(RLDataset):
                 answer_str = str(answer)
                 builder = ProblemGroupBuilder(
                     env_thunk=partial(
-                        MathEnv, problem_str, answer_str, self.renderer, convo_prefix=self.convo_prefix
+                        MathEnv,
+                        problem_str,
+                        answer_str,
+                        self.renderer,
+                        convo_prefix=self.convo_prefix,
+                        grader=self.grader,
                     ),
                     num_envs=self.group_size,
                     dataset_name=tag,
@@ -367,6 +418,9 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
     model_name_for_tokenizer: str
     renderer_name: str
     group_size: int
+    grader: Literal["sympy", "math_verify"] = "math_verify"
+    difficulty_min: float | None = None
+    difficulty_max: float | None = None
 
     async def __call__(self) -> tuple[DeepMathDataset, MathArenaEvalDataset]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
@@ -376,9 +430,14 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
                 batch_size=self.batch_size,
                 group_size=self.group_size,
                 renderer=renderer,
+                grader=self.grader,
+                difficulty_min=self.difficulty_min,
+                difficulty_max=self.difficulty_max,
             ),
             MathArenaEvalDataset(
-                renderer=renderer, eval_group_size=max(8, self.group_size)
+                renderer=renderer,
+                eval_group_size=max(8, self.group_size),
+                grader=self.grader,
             ),
         )
 
@@ -391,6 +450,7 @@ class Gsm8kDataset(RLDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
+        grader: Literal["sympy", "math_verify"] = "math_verify",
     ):
         if split not in ("train", "test"):
             raise ValueError("split must be 'train' or 'test'")
@@ -401,6 +461,7 @@ class Gsm8kDataset(RLDataset):
         self.group_size = group_size if split == "train" else 1
         self.renderer = renderer
         self.convo_prefix = convo_prefix
+        self.grader = grader
 
     @classmethod
     def question_suffix(cls) -> str:
@@ -430,7 +491,12 @@ class Gsm8kDataset(RLDataset):
             return None
         return ProblemGroupBuilder(
             env_thunk=partial(
-                MathEnv, problem, answer, self.renderer, convo_prefix=self.convo_prefix
+                MathEnv,
+                problem,
+                answer,
+                self.renderer,
+                convo_prefix=self.convo_prefix,
+                grader=self.grader,
             ),
             num_envs=group_size,
         )
@@ -443,6 +509,7 @@ class Gsm8kDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
     convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
+    grader: Literal["sympy", "math_verify"] = "math_verify"
 
     async def __call__(self) -> tuple[Gsm8kDataset, Gsm8kDataset]:
         if self.convo_prefix == "standard":
@@ -458,6 +525,7 @@ class Gsm8kDatasetBuilder(RLDatasetBuilder):
                 renderer=renderer,
                 convo_prefix=convo_prefix,
                 split=split,
+                grader=self.grader,
             )
             for split in ("train", "test")
         ]
@@ -479,6 +547,9 @@ def get_math_dataset_builder(
     model_name_for_tokenizer: str,
     renderer_name: str,
     group_size: int,
+    grader: Literal["sympy", "math_verify"] | None = None,
+    difficulty_min: float | None = None,
+    difficulty_max: float | None = None,
 ) -> RLDatasetBuilder:
     """
     Unified function to get any math dataset builder.
@@ -498,9 +569,16 @@ def get_math_dataset_builder(
 
     builder_class = DATASET_BUILDER_MAP[dataset_name]
 
-    return builder_class(
-        batch_size=batch_size,
-        model_name_for_tokenizer=model_name_for_tokenizer,
-        renderer_name=renderer_name,
-        group_size=group_size,
-    )
+    builder_kwargs: dict[str, object] = {
+        "batch_size": batch_size,
+        "model_name_for_tokenizer": model_name_for_tokenizer,
+        "renderer_name": renderer_name,
+        "group_size": group_size,
+    }
+    if grader is not None:
+        builder_kwargs["grader"] = grader
+    if dataset_name == "deepmath":
+        builder_kwargs["difficulty_min"] = difficulty_min
+        builder_kwargs["difficulty_max"] = difficulty_max
+
+    return builder_class(**builder_kwargs)
