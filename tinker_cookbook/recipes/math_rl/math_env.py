@@ -1,7 +1,7 @@
 import math
 import re
 from functools import partial
-from typing import Literal, cast
+from typing import Literal, Sequence, cast
 
 import chz
 from datasets import Dataset, concatenate_datasets, get_dataset_config_names, load_dataset
@@ -290,6 +290,77 @@ class DeepMathDataset(MathDataset):
         )
 
 
+MATH_ARENA_VALIDATION_SPECS: tuple[tuple[str, str], ...] = (
+    ("MathArena/aime_2025", "aime25"),
+    ("MathArena/hmmt_feb_2025", "hmmt25"),
+    ("MathArena/brumo_2025", "brumo25"),
+)
+
+
+def _load_matharena_dataset(dataset_name: str) -> Dataset:
+    """Load a MathArena dataset preferring validation/test splits when available."""
+    preferred_splits: tuple[str, ...] = ("validation", "test", "train")
+    last_error: Exception | None = None
+    for split in preferred_splits:
+        try:
+            return cast(Dataset, load_dataset(dataset_name, split=split))
+        except (ValueError, KeyError) as exc:
+            last_error = exc
+            continue
+    if last_error is not None:
+        raise last_error
+    raise ValueError(f"Unable to load dataset {dataset_name} with splits {preferred_splits}")
+
+
+class MathArenaEvalDataset(RLDataset):
+    def __init__(
+        self,
+        renderer: renderers.Renderer,
+        convo_prefix: list[renderers.Message] | None = None,
+        dataset_specs: Sequence[tuple[str, str]] = MATH_ARENA_VALIDATION_SPECS,
+        batch_size: int = 1,
+        eval_group_size: int = 1,
+    ):
+        self.renderer = renderer
+        self.convo_prefix = convo_prefix
+        self.batch_size = batch_size
+        if eval_group_size < 1:
+            raise ValueError("eval_group_size must be >= 1")
+        self.group_size = eval_group_size
+        self.builders: list[ProblemGroupBuilder] = []
+        for dataset_name, tag in dataset_specs:
+            ds = _load_matharena_dataset(dataset_name)
+            for row in ds:
+                problem = row.get("problem")
+                answer = row.get("answer")
+                if problem is None or answer is None:
+                    logger.warning(
+                        f"Skipping example from {dataset_name} in MathArena eval set: missing fields"
+                    )
+                    continue
+                problem_str = str(problem)
+                answer_str = str(answer)
+                builder = ProblemGroupBuilder(
+                    env_thunk=partial(
+                        MathEnv, problem_str, answer_str, self.renderer, convo_prefix=self.convo_prefix
+                    ),
+                    num_envs=self.group_size,
+                    dataset_name=tag,
+                )
+                self.builders.append(builder)
+        if not self.builders:
+            raise ValueError("MathArena eval dataset is empty; check dataset availability.")
+
+    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+        batch_start = index * self.batch_size
+        batch_end = min((index + 1) * self.batch_size, len(self.builders))
+        assert batch_start < batch_end, "Incorrect batch size"
+        return self.builders[batch_start:batch_end]
+
+    def __len__(self) -> int:
+        return math.ceil(len(self.builders) / self.batch_size)
+
+
 @chz.chz
 class DeepMathDatasetBuilder(RLDatasetBuilder):
     batch_size: int
@@ -297,13 +368,19 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
 
-    async def __call__(self) -> tuple[DeepMathDataset, None]:
+    async def __call__(self) -> tuple[DeepMathDataset, MathArenaEvalDataset]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
-        return DeepMathDataset(
-            batch_size=self.batch_size,
-            group_size=self.group_size,
-            renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
-        ), None
+        renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
+        return (
+            DeepMathDataset(
+                batch_size=self.batch_size,
+                group_size=self.group_size,
+                renderer=renderer,
+            ),
+            MathArenaEvalDataset(
+                renderer=renderer, eval_group_size=max(8, self.group_size)
+            ),
+        )
 
 
 class Gsm8kDataset(RLDataset):
