@@ -165,7 +165,7 @@ class TwentyQuestionsDataset(RLDataset):
     batch_size: int
     group_size: int
 
-    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         return [
             TwentyQuestionsEnvGroupBuilder(
                 answerer=self.answerer,

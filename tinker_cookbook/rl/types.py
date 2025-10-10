@@ -137,7 +137,7 @@ class RLDataset(ABC):
     """
 
     @abstractmethod
-    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         pass
 
     @abstractmethod

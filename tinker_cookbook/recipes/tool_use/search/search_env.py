@@ -6,7 +6,7 @@ import re
 import string
 from functools import partial, reduce
 from pathlib import Path
-from typing import Literal, TypedDict, cast
+from typing import Literal, Sequence, TypedDict, cast
 
 import chz
 import pandas as pd
@@ -315,7 +315,7 @@ class SearchR1Dataset(RLDataset):
         rng = random.Random(self.seed)
         rng.shuffle(self.ds)
 
-    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         return [
             self._make_env_group_builder(row, self.group_size)
             for row in self.ds[index * self.batch_size : (index + 1) * self.batch_size]

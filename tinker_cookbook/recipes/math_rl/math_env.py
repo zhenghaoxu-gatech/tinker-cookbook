@@ -155,7 +155,7 @@ class MathDataset(RLDataset):
         self.convo_prefix = convo_prefix
         self.grader = grader
 
-    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         batch_start = index * self.batch_size
         batch_end = min((index + 1) * self.batch_size, len(self.ds))
         assert batch_start < batch_end, "Incorrect batch size"
@@ -563,7 +563,7 @@ class Gsm8kDataset(RLDataset):
     def question_suffix(cls) -> str:
         return " Provide a numerical answer without units, written inside \\boxed{}."
 
-    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+    def get_batch(self, index: int) -> Sequence[EnvGroupBuilder]:
         batch_start = index * self.batch_size
         batch_end = min((index + 1) * self.batch_size, len(self.ds))
         assert batch_start < batch_end, "Incorrect batch size"
