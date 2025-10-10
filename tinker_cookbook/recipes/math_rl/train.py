@@ -26,7 +26,7 @@ class CLIConfig:
     load_checkpoint_path: str | None = None
 
     # Environment configuration
-    env: str = "arithmetic"  # Options: arithmetic, math, polaris, deepmath, gsm8k
+    env: str = "arithmetic"  # Options: arithmetic, math, polaris, deepmath, gsm8k, dapo_math
     grader: Literal["sympy", "math_verify"] | None = None
     difficulty_min: float | None = None
     difficulty_max: float | None = None
@@ -82,7 +82,7 @@ def get_dataset_builder(
             include_fewshot=True,
             group_size=group_size,
         )
-    elif env in ["math", "polaris", "deepmath", "gsm8k"]:
+    elif env in ["math", "polaris", "deepmath", "gsm8k", "dapo_math"]:
         return math_env.get_math_dataset_builder(
             dataset_name=env,
             batch_size=batch_size,

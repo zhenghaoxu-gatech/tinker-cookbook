@@ -442,6 +442,102 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
         )
 
 
+class MathDapoDataset(RLDataset):
+    def __init__(
+        self,
+        batch_size: int,
+        group_size: int,
+        renderer: renderers.Renderer,
+        convo_prefix: list[renderers.Message] | None = None,
+        grader: Literal["sympy", "math_verify"] = "math_verify",
+    ):
+        self.ds = load_dataset("fengyao1909/dapo-math-17k-deduplicated", split="train").shuffle(
+            seed=0
+        )
+        self.batch_size = batch_size
+        self.group_size = group_size
+        self.renderer = renderer
+        self.convo_prefix = convo_prefix
+        self.grader = grader
+
+    def get_batch(self, index: int) -> list[EnvGroupBuilder]:
+        batch_start = index * self.batch_size
+        batch_end = min((index + 1) * self.batch_size, len(self.ds))
+        assert batch_start < batch_end, "Incorrect batch size"
+        return [
+            builder
+            for row in self.ds.select(range(batch_start, batch_end))
+            if (builder := self._make_env_group_builder(row, self.group_size)) is not None  # pyright: ignore[reportArgumentType]
+        ]
+
+    def __len__(self) -> int:
+        return math.ceil(len(self.ds) / self.batch_size)
+
+    def _make_env_group_builder(
+        self, x: dict[str, object], group_size: int
+    ) -> ProblemGroupBuilder | None:
+        prompt = x.get("prompt")
+        if not isinstance(prompt, list) or not prompt:
+            return None
+        last_message = prompt[-1]
+        if not isinstance(last_message, dict):
+            return None
+        problem = last_message.get("content")
+        if not isinstance(problem, str) or not problem.strip():
+            return None
+        problem = "\n".join(
+            line for line in problem.splitlines() if "Remember to put your answer" not in line
+        ).strip()
+        if not problem:
+            return None
+        reward_model = x.get("reward_model")
+        answer: str | None = None
+        if isinstance(reward_model, dict):
+            ground_truth = reward_model.get("ground_truth")
+            if isinstance(ground_truth, str):
+                answer = ground_truth.strip()
+        if not answer:
+            return None
+        return ProblemGroupBuilder(
+            env_thunk=partial(
+                MathEnv,
+                problem,
+                answer,
+                self.renderer,
+                convo_prefix=self.convo_prefix,
+                grader=self.grader,
+            ),
+            num_envs=group_size,
+            dataset_name="math_dapo",
+        )
+
+
+@chz.chz
+class MathDapoDatasetBuilder(RLDatasetBuilder):
+    batch_size: int
+    model_name_for_tokenizer: str
+    renderer_name: str
+    group_size: int
+    grader: Literal["sympy", "math_verify"] = "math_verify"
+
+    async def __call__(self) -> tuple[MathDapoDataset, MathArenaEvalDataset]:
+        tokenizer = get_tokenizer(self.model_name_for_tokenizer)
+        renderer = renderers.get_renderer(self.renderer_name, tokenizer=tokenizer)
+        return (
+            MathDapoDataset(
+                batch_size=self.batch_size,
+                group_size=self.group_size,
+                renderer=renderer,
+                grader=self.grader,
+            ),
+            MathArenaEvalDataset(
+                renderer=renderer,
+                eval_group_size=max(8, self.group_size),
+                grader=self.grader,
+            ),
+        )
+
+
 class Gsm8kDataset(RLDataset):
     def __init__(
         self,
@@ -537,6 +633,7 @@ DATASET_BUILDER_MAP = {
     "math": MathDatasetBuilder,
     "polaris": PolarisDatasetBuilder,
     "deepmath": DeepMathDatasetBuilder,
+    "dapo_math": MathDapoDatasetBuilder,
     "gsm8k": Gsm8kDatasetBuilder,
 }
 
@@ -554,7 +651,7 @@ def get_math_dataset_builder(
     """
     Unified function to get any math dataset builder.
     Args:
-        dataset_name: One of "math", "polaris", "deepmath", or "gsm8k"
+        dataset_name: One of "math", "polaris", "deepmath", "dapo_math", or "gsm8k"
         batch_size: Number of groups per batch
         model_name_for_tokenizer: Model name for tokenizer
         renderer_name: Name of the renderer to use
