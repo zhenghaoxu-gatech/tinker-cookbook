@@ -35,6 +35,15 @@ try:
 except ImportError:
     NeptuneRun = None
 
+# Check Trackio availability
+_trackio_available = False
+try:
+    import trackio
+
+    _trackio_available = True
+except ImportError:
+    trackio = None
+
 
 def dump_config(config: Any) -> Any:
     """Convert configuration object to JSON-serializable format."""
@@ -86,6 +95,10 @@ class Logger(ABC):
     def sync(self) -> None:
         """Force synchronization (optional to implement)."""
         pass
+
+    def get_logger_url(self) -> str | None:
+        """Get a permalink to view this logger's results."""
+        return None
 
 
 class _PermissiveJSONEncoder(json.JSONEncoder):
@@ -139,7 +152,7 @@ class PrettyPrintLogger(Logger):
 
     def log_hparams(self, config: Any) -> None:
         """Print configuration summary."""
-        config_dict = chz.asdict(config)
+        config_dict = dump_config(config)
         with _rich_console_use_logger(self.console):
             self.console.print("[bold cyan]Configuration:[/bold cyan]")
             for key, value in config_dict.items():
@@ -230,6 +243,12 @@ class WandbLogger(Logger):
         if self.run and wandb is not None:
             wandb.finish()
 
+    def get_logger_url(self) -> str | None:
+        """Get the URL of the wandb run."""
+        if self.run and wandb is not None:
+            return self.run.url
+        return None
+
 
 class NeptuneLogger(Logger):
     """Logger for Neptune."""
@@ -281,6 +300,46 @@ class NeptuneLogger(Logger):
             self.run.close()
 
 
+class TrackioLogger(Logger):
+    """Logger for Trackio."""
+
+    def __init__(
+        self,
+        project: str | None = None,
+        config: Any | None = None,
+        log_dir: str | Path | None = None,
+        trackio_name: str | None = None,
+    ):
+        if not _trackio_available:
+            raise ImportError(
+                "trackio is not installed. Please install it with: "
+                "pip install trackio (or uv add trackio)"
+            )
+
+        assert trackio is not None
+        self.run = trackio.init(
+            project=project or "default",
+            name=trackio_name,
+            config=dump_config(config) if config else None,
+        )
+
+    def log_hparams(self, config: Any) -> None:
+        """Log hyperparameters to trackio."""
+        if self.run and trackio is not None:
+            pass
+
+    def log_metrics(self, metrics: Dict[str, Any], step: int | None = None) -> None:
+        """Log metrics to trackio."""
+        if self.run and trackio is not None:
+            trackio.log(metrics, step=step)
+            logger.info("Logged metrics to Trackio project: %s", self.run.project)
+
+    def close(self) -> None:
+        """Close trackio run."""
+        if self.run and trackio is not None:
+            trackio.finish()
+
+
 class MultiplexLogger(Logger):
     """Logger that forwards operations to multiple child loggers."""
 
@@ -314,6 +373,13 @@ class MultiplexLogger(Logger):
         for logger in self.loggers:
             if hasattr(logger, "sync"):
                 logger.sync()
+
+    def get_logger_url(self) -> str | None:
+        """Get the first URL returned by the child loggers."""
+        for logger in self.loggers:
+            if url := logger.get_logger_url():
+                return url
+        return None
 
 
 def setup_logging(
@@ -387,6 +453,17 @@ def setup_logging(
                     neptune_name=wandb_name,
                 )
             )
+
+    if wandb_project and _trackio_available:
+        loggers.append(
+            TrackioLogger(
+                project=wandb_project,
+                config=config,
+                log_dir=log_dir_path,
+                trackio_name=wandb_name,
+            )
+        )
+        print(f"Trackio logging enabled for project: {wandb_project}")
 
     # Create multiplex logger
     ml_logger = MultiplexLogger(loggers)

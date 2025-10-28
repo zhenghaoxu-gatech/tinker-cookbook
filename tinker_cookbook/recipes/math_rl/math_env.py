@@ -54,6 +54,9 @@ class MathEnv(ProblemEnv):
             return False
         return safe_grade(answer, self.answer, self.grader, self.timeout)
 
+    def get_reference_answer(self) -> str:
+        return self.answer
+
     @staticmethod
     def standard_fewshot_prefix() -> list[renderers.Message]:
         return [
@@ -144,9 +147,10 @@ class MathDataset(RLDataset):
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
         grader: Literal["sympy", "math_verify"] = "math_verify",
+        seed: int = 0,
     ):
         if split == "train":
-            self.ds = _get_hendrycks_math_train().shuffle(seed=0)
+            self.ds = _get_hendrycks_math_train().shuffle(seed=seed)
         elif split == "test":
             self.ds = _get_hendrycks_math_test()
         self.batch_size = batch_size
@@ -197,6 +201,7 @@ class MathDatasetBuilder(RLDatasetBuilder):
     group_size: int
     convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
     grader: Literal["sympy", "math_verify"] = "math_verify"
+    seed: int = 0
 
     async def __call__(self) -> tuple[MathDataset, MathDataset]:
         if self.convo_prefix == "standard":
@@ -213,6 +218,7 @@ class MathDatasetBuilder(RLDatasetBuilder):
                 convo_prefix=convo_prefix,
                 split=split,
                 grader=self.grader,
+                seed=self.seed,
             )
             for split in ("train", "test")
         ]
@@ -227,9 +233,12 @@ class PolarisDataset(MathDataset):
         renderer: renderers.Renderer,
         convo_prefix: list[renderers.Message] | None = None,
         grader: Literal["sympy", "math_verify"] = "math_verify",
+        seed: int = 0,
     ):
         # Don't call super().__init__ since we're overriding the dataset loading
-        self.ds = load_dataset("POLARIS-Project/Polaris-Dataset-53K", split="train").shuffle(seed=0)
+        self.ds = load_dataset("POLARIS-Project/Polaris-Dataset-53K", split="train").shuffle(
+            seed=seed
+        )
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer = renderer
@@ -265,6 +274,7 @@ class PolarisDatasetBuilder(RLDatasetBuilder):
     renderer_name: str
     group_size: int
     grader: Literal["sympy", "math_verify"] = "math_verify"
+    seed: int = 0
 
     async def __call__(self) -> tuple[PolarisDataset, None]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
@@ -273,6 +283,7 @@ class PolarisDatasetBuilder(RLDatasetBuilder):
             group_size=self.group_size,
             renderer=renderers.get_renderer(self.renderer_name, tokenizer=tokenizer),
             grader=self.grader,
+            seed=self.seed,
         ), None
 
 
@@ -286,6 +297,7 @@ class DeepMathDataset(MathDataset):
         grader: Literal["sympy", "math_verify"] = "math_verify",
         difficulty_min: float | None = None,
         difficulty_max: float | None = None,
+        seed: int = 0,
     ):
         # Don't call super().__init__ since we're overriding the dataset loading
         dataset = load_dataset("zwhe99/DeepMath-103K", split="train")
@@ -305,7 +317,7 @@ class DeepMathDataset(MathDataset):
                 return True
 
             dataset = dataset.filter(in_range)
-        self.ds = dataset.shuffle(seed=0)
+        self.ds = dataset.shuffle(seed=seed)
         self.batch_size = batch_size
         self.group_size = group_size
         self.renderer = renderer
@@ -421,6 +433,7 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
     grader: Literal["sympy", "math_verify"] = "math_verify"
     difficulty_min: float | None = None
     difficulty_max: float | None = None
+    seed: int = 0
 
     async def __call__(self) -> tuple[DeepMathDataset, MathArenaEvalDataset]:
         tokenizer = get_tokenizer(self.model_name_for_tokenizer)
@@ -433,6 +446,7 @@ class DeepMathDatasetBuilder(RLDatasetBuilder):
                 grader=self.grader,
                 difficulty_min=self.difficulty_min,
                 difficulty_max=self.difficulty_max,
+                seed=self.seed,
             ),
             MathArenaEvalDataset(
                 renderer=renderer,
@@ -547,12 +561,13 @@ class Gsm8kDataset(RLDataset):
         convo_prefix: list[renderers.Message] | None = None,
         split: Literal["train", "test"] = "train",
         grader: Literal["sympy", "math_verify"] = "math_verify",
+        seed: int = 0,
     ):
         if split not in ("train", "test"):
             raise ValueError("split must be 'train' or 'test'")
         self.ds = cast(Dataset, load_dataset("openai/gsm8k", name="main", split=split))
         if split == "train":
-            self.ds = self.ds.shuffle(seed=0)
+            self.ds = self.ds.shuffle(seed=seed)
         self.batch_size = batch_size
         self.group_size = group_size if split == "train" else 1
         self.renderer = renderer
@@ -606,6 +621,7 @@ class Gsm8kDatasetBuilder(RLDatasetBuilder):
     group_size: int
     convo_prefix: list[renderers.Message] | None | Literal["standard"] = "standard"
     grader: Literal["sympy", "math_verify"] = "math_verify"
+    seed: int = 0
 
     async def __call__(self) -> tuple[Gsm8kDataset, Gsm8kDataset]:
         if self.convo_prefix == "standard":
@@ -622,6 +638,7 @@ class Gsm8kDatasetBuilder(RLDatasetBuilder):
                 convo_prefix=convo_prefix,
                 split=split,
                 grader=self.grader,
+                seed=self.seed,
             )
             for split in ("train", "test")
         ]
@@ -647,6 +664,7 @@ def get_math_dataset_builder(
     grader: Literal["sympy", "math_verify"] | None = None,
     difficulty_min: float | None = None,
     difficulty_max: float | None = None,
+    seed: int = 0,
 ) -> RLDatasetBuilder:
     """
     Unified function to get any math dataset builder.
@@ -656,6 +674,7 @@ def get_math_dataset_builder(
         model_name_for_tokenizer: Model name for tokenizer
         renderer_name: Name of the renderer to use
         group_size: Number of environments per group
+        seed: Random seed for data shuffling (default: 0)
     Returns:
         The appropriate dataset builder instance
     """
@@ -671,6 +690,7 @@ def get_math_dataset_builder(
         "model_name_for_tokenizer": model_name_for_tokenizer,
         "renderer_name": renderer_name,
         "group_size": group_size,
+        "seed": seed,
     }
     if grader is not None:
         builder_kwargs["grader"] = grader

@@ -30,6 +30,7 @@ class CLIConfig:
     grader: Literal["sympy", "math_verify"] | None = None
     difficulty_min: float | None = None
     difficulty_max: float | None = None
+    seed: int = 0  # Random seed for data shuffling
 
     # Training hyperparameters
     group_size: int = 4
@@ -61,6 +62,7 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps_off_policy: int | None = None
+    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
 
 
 def get_dataset_builder(
@@ -72,6 +74,7 @@ def get_dataset_builder(
     grader: Literal["sympy", "math_verify"] | None,
     difficulty_min: float | None,
     difficulty_max: float | None,
+    seed: int = 0,
 ) -> RLDatasetBuilder:
     if env == "arithmetic":
         return arithmetic_env.ArithmeticDatasetBuilder(
@@ -92,6 +95,7 @@ def get_dataset_builder(
             grader=grader,
             difficulty_min=difficulty_min,
             difficulty_max=difficulty_max,
+            seed=seed,
         )
     else:
         raise ValueError(f"Unknown environment: {env}")
@@ -105,7 +109,7 @@ async def cli_main(cli_config: CLIConfig):
         cli_config.model_name
     )
     model_name = cli_config.model_name.replace("/", "-")
-    run_name = f"{cli_config.env}-{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.group_size}group-{cli_config.groups_per_batch}batch-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
+    run_name = f"{cli_config.env}-{model_name}-{cli_config.lora_rank}rank-{cli_config.learning_rate}lr-{cli_config.group_size}group-{cli_config.groups_per_batch}batch-{cli_config.loss_fn}-seed{cli_config.seed}-{datetime.now().strftime('%Y-%m-%d-%H-%M')}"
     # create log path if it doesn't exist
     if cli_config.log_path is not None:
         log_path = cli_config.log_path
@@ -128,6 +132,7 @@ async def cli_main(cli_config: CLIConfig):
             grader=cli_config.grader,
             difficulty_min=cli_config.difficulty_min,
             difficulty_max=cli_config.difficulty_max,
+            seed=cli_config.seed,
         ),
         model_name=cli_config.model_name,
         lora_rank=cli_config.lora_rank,
@@ -149,6 +154,7 @@ async def cli_main(cli_config: CLIConfig):
         )
         if cli_config.max_steps_off_policy is not None
         else None,
+        loss_fn=cli_config.loss_fn,
     )
 
     cli_utils.check_log_dir(log_path, behavior_if_exists=cli_config.behavior_if_log_dir_exists)
