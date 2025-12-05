@@ -32,7 +32,7 @@ _CONNECTION_SEMAPHORE = asyncio.Semaphore(128)
 
 SEARCH_TOOL_SYSTEM_PROMPT = """
 You are an expert assistant who solves tasks using a Wikipedia search tool.
-Tool calling. Execute the tool by wrapping calls in <function_call>...</function_call>
+Tool calling. Execute the tool by wrapping calls in <tool_call>...</tool_call>
 
 The search tool you are given has the following schema:
 ```
@@ -69,9 +69,9 @@ Here is an example of solving a real question:
 “Between 2020 and 2025, which year did New York City see the most population growth and how did San Francisco population change in that year?”
 
 1. Think step by step: In order to answer this question, I need to know the population of New York City and San Francisco between 2020 and 2025. I will search for the population of New York City in each year
-2. Calling search tool: <function_call>{"name": "search", "args": {"query_list": ["Population New York city between 2020 and 2025"]}}</function_call> (Output omitted for brevity)
+2. Calling search tool: <tool_call>{"name": "search", "args": {"query_list": ["Population New York city between 2020 and 2025"]}}</tool_call> (Output omitted for brevity)
 3. Think step by step again: I have the population of New York City in each year, and I see that the population of New York City grew the most in 2024. I need to know the population of San Francisco in 2024. I will search for the population of San Francisco in each year.
-<function_call>{"name": "search", "args": {"query_list": ["Population San Francisco between 2023 and 2024"]}}</function_call> (Output omitted for brevity)
+<tool_call>{"name": "search", "args": {"query_list": ["Population San Francisco between 2023 and 2024"]}}</tool_call> (Output omitted for brevity)
 4. Answer: The population of New York City grew the most in 2024, and the population of San Francisco changed by XXXX in 2024.
 """
 
@@ -164,19 +164,23 @@ class SearchEnv(ProblemEnv):
         self.past_messages.append(message)
 
         if "tool_calls" in message:
+            tool_calls = message["tool_calls"]
             failure_result = StepResult(
                 reward=0.0,
                 episode_done=True,
                 next_observation=tinker.ModelInput.empty(),
                 next_stop_condition=self.stop_condition,
             )
-            if message["tool_calls"][0]["name"] == "search":
+            # Check if tool_calls list is not empty
+            if not tool_calls:
+                return failure_result
+            if tool_calls[0].function.name == "search":
                 self.current_num_calls += 1
                 if self.current_num_calls > self.max_num_calls:
                     return failure_result
                 # NOTE(tianyi): seems wasteful: we should share the client somehow
                 try:
-                    tool_return_message = await self.call_search_tool(message["tool_calls"][0])
+                    tool_return_message = await self.call_search_tool(tool_calls[0])
                     self.past_messages.extend(tool_return_message)
                 except Exception as e:
                     logger.error(f"Error calling search tool: {repr(e)}")
@@ -274,9 +278,6 @@ def download_search_r1_dataset(split: Literal["train", "test"]) -> list[SearchR1
     assert user is not None
     tmp_download_dir = Path("/tmp") / user / "data" / hf_repo_id / split
     tmp_download_dir.mkdir(parents=True, exist_ok=True)
-
-    hf_repo_id: str = "PeterJinGo/nq_hotpotqa_train"
-    parquet_filename: str = f"{split}.parquet"
 
     local_parquet_filepath = hf_hub_download(
         repo_id=hf_repo_id,

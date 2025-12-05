@@ -1,7 +1,6 @@
 import asyncio
 import logging
 from datetime import datetime
-from typing import Literal
 
 import chz
 from tinker_cookbook import cli_utils, model_info
@@ -11,6 +10,7 @@ from tinker_cookbook.recipes.math_rl import (
 )
 from tinker_cookbook.rl.train import AsyncConfig, Config, main
 from tinker_cookbook.rl.types import RLDatasetBuilder
+from tinker.types import LossFnType
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +38,7 @@ class CLIConfig:
     learning_rate: float = 1e-5
     max_tokens: int = 5
     max_tokens_eval: int | None = None
+    temperature: float = 1.0
     kl_penalty_coef: float = 0.0
 
     # Number of optimizer steps per training iteration.
@@ -62,7 +63,7 @@ class CLIConfig:
     behavior_if_log_dir_exists: cli_utils.LogdirBehavior = "ask"
 
     max_steps_off_policy: int | None = None
-    loss_fn: Literal["importance_sampling", "ppo"] = "importance_sampling"
+    loss_fn: LossFnType = "importance_sampling"
 
 
 def get_dataset_builder(
@@ -138,6 +139,7 @@ async def cli_main(cli_config: CLIConfig):
         lora_rank=cli_config.lora_rank,
         max_tokens=cli_config.max_tokens,
         max_tokens_eval=cli_config.max_tokens_eval,
+        temperature=cli_config.temperature,
         wandb_project=cli_config.wandb_project,
         wandb_name=wandb_name,
         log_path=log_path,

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from abc import ABC, abstractmethod
 from typing import Any
@@ -8,7 +9,7 @@ import chz
 from chromadb.api import AsyncClientAPI
 from chromadb.api.types import QueryResult
 from chromadb.config import Settings
-from google import genai
+import google.genai as genai
 from tinker_cookbook.recipes.tool_use.search.embedding import (
     get_gemini_client,
     get_gemini_embedding,
@@ -142,17 +143,27 @@ class ChromaToolClient(ToolClientInterface):
         raise RuntimeError("All ChromaDB query attempts failed")
 
     async def invoke(self, tool_call: ToolCall) -> list[Message]:
-        if tool_call["name"] != "search":
-            raise ValueError(f"Invalid tool name: {tool_call['name']}")
-        if not isinstance(tool_call["args"], dict) or "query_list" not in tool_call["args"]:
+        if tool_call.function.name != "search":
+            raise ValueError(f"Invalid tool name: {tool_call.function.name}")
+
+        # Parse arguments with error handling
+        try:
+            args = json.loads(tool_call.function.arguments)
+        except json.JSONDecodeError as e:
+            return [
+                Message(
+                    role="tool",
+                    content=f"Error invoking search tool: Invalid JSON in arguments - {str(e)}",
+                )
+            ]
+
+        query_list = args.get("query_list")
+        if not isinstance(query_list, list):
             return [
                 Message(role="tool", content="Error invoking search tool: query_list is required")
             ]
-        query_list = tool_call["args"]["query_list"]
-        if (
-            not isinstance(query_list, list)
-            or not len(query_list) > 0
-            or not all(isinstance(query, str) and len(query.strip()) > 0 for query in query_list)
+        if not query_list or not all(
+            isinstance(query, str) and query.strip() for query in query_list
         ):
             return [
                 Message(
