@@ -42,6 +42,16 @@ class DistillationDatasetConfig:
     groups_per_batch: int
 
 
+@chz.chz
+class ExtrapolationDatasetConfig:
+    """Configuration for a dataset used in extrapolation distillation."""
+
+    dataset_builder: RLDatasetBuilder
+    teacher_config: TeacherConfig
+    reward_reference_config: TeacherConfig
+    groups_per_batch: int
+
+
 class CompositeDataset:
     """Wraps multiple datasets and samples from each according to their groups_per_batch."""
 
